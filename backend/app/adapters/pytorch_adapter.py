@@ -336,6 +336,7 @@ class PytorchAdapter(ModelAdapter):
         layer_steps: list[list[Any]] = [[] for _ in range(n_layers)]
         embed_steps: list[Any] = []
         handles: list[Any] = []
+        pre_inputs: list[Any] = [None] * n_layers
 
         def make_embed_hook():
             def hook(_module: Any, _inputs: Any, output: Any) -> Any:
@@ -359,16 +360,25 @@ class PytorchAdapter(ModelAdapter):
                 return (x, *inputs[1:])
             return pre_hook
 
+        def make_layer_pre_hook(idx: int):
+            factor = layer_factors[idx]
+            def pre_hook(_module: Any, inputs: Any) -> Any:
+                if abs(factor - 1.0) > 1e-6 and inputs:
+                    # capture a detached clone before the layer modifies it in-place
+                    pre_inputs[idx] = inputs[0].clone()
+            return pre_hook
+
         def make_layer_hook(idx: int):
             factor = layer_factors[idx]
             def hook(_module: Any, inputs: Any, output: Any) -> Any:
                 hidden = output[0] if isinstance(output, tuple) else output
                 new_out = hidden
-                # layer scale / mute relative to the residual entering the layer
-                if abs(factor - 1.0) > 1e-6 and inputs:
-                    prev = inputs[0]
+                # layer scale / mute relative to the unmodified residual entering the layer
+                if abs(factor - 1.0) > 1e-6 and pre_inputs[idx] is not None:
+                    prev = pre_inputs[idx]
                     if hasattr(prev, "shape") and prev.shape == new_out.shape:
                         new_out = prev + (new_out - prev) * factor
+                    pre_inputs[idx] = None  # free memory
                 # jailbreak subspace ablation where refusal is mediated
                 _steer_layer = jailbreak and subspace is not None and (
                     (jailbreak_mode == "surgical" and jailbreak_advanced is not None and idx in surgical_layers)
@@ -390,6 +400,8 @@ class PytorchAdapter(ModelAdapter):
         for idx, layer in enumerate(layers):
             if head_mutes.get(idx):
                 handles.append(layer.self_attn.o_proj.register_forward_pre_hook(make_omute_pre_hook(idx)))
+            if abs(layer_factors[idx] - 1.0) > 1e-6:
+                handles.append(layer.register_forward_pre_hook(make_layer_pre_hook(idx)))
             handles.append(layer.register_forward_hook(make_layer_hook(idx)))
 
         do_sample = temperature > 0
