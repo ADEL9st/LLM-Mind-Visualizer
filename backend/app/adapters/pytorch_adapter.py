@@ -200,6 +200,7 @@ class PytorchAdapter(ModelAdapter):
                 use_mlp=use_mlp,
                 use_help=use_help,
                 use_norm=use_norm,
+                refusal_dirs=refusal_dirs,
             )
         except Exception as exc:  # noqa: BLE001
             yield event("error", {"message": f"pytorch generation failed: {exc}"})
@@ -318,6 +319,7 @@ class PytorchAdapter(ModelAdapter):
         use_mlp: bool = True,
         use_help: bool = True,
         use_norm: bool = True,
+        refusal_dirs: Any = None,
     ) -> tuple[list[list[Any]], list[Any], list[Any], list[int]]:
         """Generate with KV cache, capturing post-intervention residuals via hooks.
 
