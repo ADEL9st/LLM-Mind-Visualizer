@@ -1,0 +1,26 @@
+.panel {
+  border:1px solid #263442;
+  background:#101820eb;
+  border-radius:8px;
+  padding:14px;
+  box-shadow:0 12px 26px #0000002e
+}
+
+.panel-title {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  color:#d7e1ea;
+  margin-bottom:12px
+}
+
+.panel-title svg {
+  color:#6ee7b7
+}
+
+.panel-title h2 {
+  margin:0;
+  font-size:15px;
+  line-height:1.2;
+  letter-spacing:0
+}

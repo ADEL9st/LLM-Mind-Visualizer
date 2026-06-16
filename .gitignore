@@ -1,0 +1,55 @@
+# ── OS & Editor ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Python / Backend ──
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+*.log
+backend/ws_dump.jsonl
+backend/src_backup/
+backend/benchmarks/custom*.jsonl
+backend/benchmarks/my_*.jsonl
+
+# ── Node / Frontend ──
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+frontend/src_backup/
+
+# ── Environments & Secrets ──
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.pem
+secrets.json
+
+# ── Large Files & Models ──
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# ── Project Specific ──
+context.md
+app_history.txt
+
+# NOTE: 'backend/app/jailbreak_advanced.py' was previously ignored. 
+# I removed it from here so that the 14 advanced modes you added are included when you share the project.
+# If you want to keep the advanced jailbreaks PRIVATE, uncomment the line below:
+# backend/app/jailbreak_advanced.py

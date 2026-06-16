@@ -1,0 +1,151 @@
+.app-shell {
+  width:min(1800px,100%);
+  margin:0 auto;
+  padding:18px
+}
+
+.topbar {
+  min-height:72px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px
+}
+
+.topbar h1 {
+  margin:0;
+  font-size:26px;
+  line-height:1.1;
+  letter-spacing:0
+}
+
+.topbar p {
+  margin:7px 0 0;
+  color:#95a3b1
+}
+
+.topbar-actions {
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:12px;
+  flex-wrap:wrap
+}
+
+.language-select {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  color:#95a3b1;
+  font-size:13px
+}
+
+.language-select select {
+  min-height:34px;
+  border:1px solid #334150;
+  background:#141c24;
+  color:#e8edf1;
+  border-radius:7px;
+  padding:0 9px;
+  outline:none
+}
+
+.layout {
+  display:grid;
+  grid-template-columns:minmax(280px,340px) minmax(420px,1fr) minmax(300px,390px);
+  gap:14px;
+  align-items:start
+}
+
+.tab-nav {
+  display:flex;
+  gap:4px;
+  background:#0f171f;
+  border:1px solid #263442;
+  border-radius:10px;
+  padding:4px
+}
+
+.tab-nav .tab {
+  min-height:34px;
+  border:1px solid transparent;
+  background:transparent;
+  color:#9aa7b4;
+  border-radius:7px;
+  padding:0 16px;
+  font-size:14px
+}
+
+.tab-nav .tab:hover:not(.active) {
+  background:#16212c;
+  color:#cdd8e0
+}
+
+.tab-nav .tab.active {
+  background:#1e6f5c;
+  border-color:#2c947d;
+  color:#eafff7
+}
+
+@media(max-width:1100px) {
+  .chat-layout,.settings-layout {
+  grid-template-columns:1fr
+}
+
+
+}
+
+@media(max-width:1180px) {
+  .layout {
+  grid-template-columns:320px 1fr
+}
+
+.right-stack {
+  grid-column:1 / -1;
+  grid-template-columns:repeat(2,minmax(0,1fr))
+}
+
+
+}
+
+@media(max-width:780px) {
+  .app-shell {
+  padding:12px
+}
+
+.topbar {
+  align-items:flex-start;
+  flex-direction:column
+}
+
+.topbar-actions {
+  width:100%;
+  justify-content:space-between
+}
+
+.layout,.right-stack {
+  grid-template-columns:1fr
+}
+
+.layer-grid {
+  grid-template-columns:repeat(4,minmax(0,1fr))
+}
+
+.metric-strip {
+  grid-template-columns:repeat(2,minmax(0,1fr))
+}
+
+.grid-two,.rule-grid {
+  grid-template-columns:1fr
+}
+
+
+}
+
+.app-shell.blurred-shell {
+  filter:blur(10px);
+  pointer-events:none;
+  -webkit-user-select:none;
+  user-select:none;
+  opacity:.6
+}

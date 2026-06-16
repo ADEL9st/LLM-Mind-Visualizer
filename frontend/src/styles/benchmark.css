@@ -1,0 +1,177 @@
+.bench-panel,.compare-panel {
+  display:flex;
+  flex-direction:column;
+  gap:.85rem;
+  padding:1rem;
+  overflow-y:auto;
+  flex:1
+}
+
+.bench-header {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:1rem;
+  flex-wrap:wrap
+}
+
+.bench-header h2 {
+  font-size:1rem;
+  font-weight:600;
+  display:flex;
+  align-items:center;
+  gap:.4rem;
+  margin:0 0 .2rem
+}
+
+.bench-actions {
+  display:flex;
+  gap:.5rem;
+  flex-wrap:wrap
+}
+
+.bench-jsonl-label {
+  width:100%
+}
+
+.bench-jsonl {
+  width:100%;
+  font-family:var(--font-mono, monospace);
+  font-size:.75rem;
+  resize:vertical;
+  background:var(--bg-input, var(--surface));
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:.5rem;
+  box-sizing:border-box
+}
+
+.bench-status-row {
+  display:flex;
+  align-items:center;
+  gap:.75rem;
+  flex-wrap:wrap
+}
+
+.bench-status-text {
+  font-size:.8rem;
+  color:var(--text-muted)
+}
+
+.bench-status-text.running {
+  color:var(--accent);
+  animation:pulse 1.2s ease-in-out infinite
+}
+
+.bench-progress-bar {
+  flex:1;
+  min-width:120px;
+  max-width:260px;
+  height:6px;
+  background:var(--border);
+  border-radius:3px;
+  overflow:hidden
+}
+
+.bench-progress-fill {
+  height:100%;
+  background:var(--accent);
+  border-radius:3px;
+  transition:width .3s ease
+}
+
+.bench-summary {
+  font-size:.75rem;
+  color:var(--text-muted)
+}
+
+.bench-empty {
+  padding:2rem;
+  text-align:center
+}
+
+.bench-table-wrap {
+  overflow-x:auto
+}
+
+.bench-table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:.78rem
+}
+
+.bench-table th {
+  text-align:left;
+  padding:.4rem .6rem;
+  border-bottom:1px solid var(--border);
+  color:var(--text-muted);
+  font-weight:600;
+  white-space:nowrap
+}
+
+.bench-table td {
+  padding:.35rem .6rem;
+  border-bottom:1px solid var(--border-subtle, rgba(255,255,255,.06));
+  vertical-align:top;
+  max-width:260px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.bench-table tr:last-child td {
+  border-bottom:none
+}
+
+.bench-row.verdict-PASS {
+  background:#4ade800d
+}
+
+.bench-row.verdict-FAIL-bypass {
+  background:#ef444414
+}
+
+.bench-row.verdict-FAIL-overblock {
+  background:#fbbf2412
+}
+
+.bench-row.verdict-ERROR {
+  background:#94a3b812
+}
+
+.bench-prompt-cell,.bench-answer-cell {
+  max-width:220px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap
+}
+
+.bench-expand-row td {
+  padding:0;
+  border-bottom:1px solid var(--border)
+}
+
+.bench-expand-body {
+  padding:.75rem 1rem;
+  display:flex;
+  flex-direction:column;
+  gap:.3rem;
+  background:#ffffff08
+}
+
+.expand-label {
+  font-size:.72rem;
+  color:var(--text-muted);
+  text-transform:uppercase;
+  letter-spacing:.04em
+}
+
+.expand-answer {
+  font-size:.82rem;
+  line-height:1.55;
+  white-space:pre-wrap;
+  word-break:break-word;
+  margin:0;
+  color:var(--text)
+}
