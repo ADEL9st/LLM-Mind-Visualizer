@@ -229,6 +229,7 @@ export default function App() {
   const [promptCraft, setPromptCraft] = useState<PromptCraftType>("none");
   const [quantization, setQuantization] = useState<Quantization>("none");
   const [interventions, setInterventions] = useState<UIRule[]>([]);
+  const [layerCount, setLayerCount] = useState<number>(28);
 
   const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [generatedText, setGeneratedText] = useState("");
@@ -589,9 +590,15 @@ export default function App() {
 
   function handleEvent(event: StreamEvent) {
     if (event.type === "run_started") {
-      const data = event.data as { prompt_tokens?: number };
+      const data = event.data as { prompt_tokens?: number; layer_count?: number };
       if (typeof data.prompt_tokens === "number") setPromptTokens(data.prompt_tokens);
+      if (typeof data.layer_count === "number") setLayerCount(data.layer_count);
       appendLog(t.logs.modelRunnerOpened);
+    }
+    if (event.type === "layer_activity") {
+      const data = event.data as { layers: LayerMetric[] };
+      setLayers(data.layers);
+      if (data.layers.length > 0) setLayerCount(data.layers.length);
     }
     if (event.type === "prompt_crafted") {
       const data = event.data as { crafted_prompt: string };
@@ -603,9 +610,7 @@ export default function App() {
       generatedTextRef.current = data.generated_text;
       if (data.phase) setCurrentPhase(data.phase);
     }
-    if (event.type === "layer_activity") {
-      setLayers((event.data as { layers: LayerMetric[] }).layers);
-    }
+
     if (event.type === "uncertainty") {
       const data = event.data as { entropy: number; hallucination_risk: number; top_k: Candidate[] };
       setEntropy(data.entropy);
@@ -1055,7 +1060,13 @@ export default function App() {
                   <div className="telemetry-col">
                     <section className="panel glassmorphic">
                       <PanelTitle icon={<BrainCircuit size={18} />} title={t.layerActivity} />
-                      <LayerGrid layers={layers} activityLabel={t.activityTooltip} safetyLabel={t.safety} uncertaintyLabel={t.uncertainty || "Uncertainty"} />
+                      <LayerGrid 
+                        layers={layers} 
+                        layerCount={layerCount}
+                        activityLabel={t.activityTooltip} 
+                        safetyLabel={t.safety} 
+                        uncertaintyLabel={t.uncertainty || "Uncertainty"} 
+                      />
                     </section>
                     <section className="panel glassmorphic">
                       <PanelTitle icon={<Eye size={18} />} title={t.layerLens} />
@@ -1337,8 +1348,8 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LayerGrid({ layers, activityLabel, safetyLabel, uncertaintyLabel }: { layers: LayerMetric[]; activityLabel: string; safetyLabel: string; uncertaintyLabel: string }) {
-  const source = layers.length ? layers : Array.from({ length: 28 }, (_, layer) => ({ layer, activity: 0, safety: 0, uncertainty: 0 }));
+function LayerGrid({ layers, layerCount, activityLabel, safetyLabel, uncertaintyLabel }: { layers: LayerMetric[]; layerCount: number; activityLabel: string; safetyLabel: string; uncertaintyLabel: string }) {
+  const source = layers.length ? layers : Array.from({ length: layerCount }, (_, layer) => ({ layer, activity: 0, safety: 0, uncertainty: 0 }));
   return (
     <div className="layer-grid">
       {source.map((item) => (
