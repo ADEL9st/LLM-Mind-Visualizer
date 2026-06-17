@@ -110,6 +110,21 @@ def safety_trace_payload(safety_values: list[float], jailbreak: bool) -> dict[st
     }
 
 
+def release_memory(torch_module: Any) -> None:
+    import gc
+    gc.collect()
+    if torch_module is not None and hasattr(torch_module, "cuda") and torch_module.cuda.is_available():
+        torch_module.cuda.empty_cache()
+        try:
+            torch_module.cuda.ipc_collect()
+        except Exception:
+            pass
+        try:
+            torch_module.cuda.synchronize()
+        except Exception:
+            pass
+
+
 def intervention_payload(intervention: Any) -> dict[str, Any]:
     return {
         "target_type": intervention.target_type,

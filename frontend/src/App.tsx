@@ -538,6 +538,16 @@ export default function App() {
     appendLog(t.logs.runStopped);
   }
 
+  async function unloadModels() {
+    try {
+      const r = await fetch("http://127.0.0.1:8000/unload", { method: "POST" });
+      const data = await r.json();
+      appendLog(`unload: ${(data.released || []).join(", ") || "(none)"}`);
+    } catch (err) {
+      appendLog(`unload failed: ${err}`);
+    }
+  }
+
   async function startBenchmark() {
     const cases = parseBenchmarkJsonl(benchmarkJsonl);
     if (!cases.length || busy || !whiteboxAdapter) return;
@@ -1112,15 +1122,25 @@ export default function App() {
                     <MessageSquare size={15} />
                     <span>{t.chatHistory}: <strong>{messages.length}</strong></span>
                   </div>
-                  <button
-                    className="new-chat-btn"
-                    onClick={newChat}
-                    disabled={messages.length === 0 && !pendingUserMessage && !generatedText}
-                    title={t.newChatTitle}
-                  >
-                    <Plus size={14} />
-                    {t.newChat}
-                  </button>
+                  <div className="chat-history-head-actions">
+                    <button
+                      className="new-chat-btn"
+                      onClick={unloadModels}
+                      disabled={status === "running"}
+                      title={t.unloadModelTitle}
+                    >
+                      {t.unloadModel}
+                    </button>
+                    <button
+                      className="new-chat-btn"
+                      onClick={newChat}
+                      disabled={messages.length === 0 && !pendingUserMessage && !generatedText}
+                      title={t.newChatTitle}
+                    >
+                      <Plus size={14} />
+                      {t.newChat}
+                    </button>
+                  </div>
                 </div>
                 <div className="chat-history" ref={chatScrollRef}>
                   {messages.map((msg, index) => (

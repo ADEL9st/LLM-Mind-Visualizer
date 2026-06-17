@@ -46,13 +46,38 @@ BROKER_MIN_SCORE = 0.1
 BROKER_HALF_SCALE = 0.35  # heads retain this fraction of their output in broker_half
 
 
-def primary_axis_steer(mode: str, new_out: Any, coeff: Any, direction: Any, out_dtype: Any) -> Any:
+def _adaptive_multiplier(base_mult: float, hidden_dim: int) -> float:
+    """Scale down the overshoot multiplier for small models.
+
+    Large models (hidden_dim >= 4096, i.e. 7B+) return the base multiplier
+    unchanged.  Smaller models get a proportionally reduced value to prevent
+    the residual-stream norm from being pushed off-manifold — their lower
+    absolute norms make the same multiplier relatively much more disruptive.
+    """
+    if hidden_dim <= 0 or hidden_dim >= 4096:
+        return base_mult
+    if hidden_dim >= 2048:  # 3B–7B: mild reduction
+        ratio = (hidden_dim - 1024) / (4096 - 1024)  # 0.33–1.0
+        return base_mult * (0.7 + 0.3 * ratio)
+    # <3B: significant reduction
+    ratio = max(hidden_dim, 768) / 2048  # 0.375–1.0
+    return base_mult * (0.5 + 0.2 * ratio)
+
+
+def primary_axis_steer(
+    mode: str, new_out: Any, coeff: Any, direction: Any, out_dtype: Any,
+    hidden_dim: int = 0,
+) -> Any:
     """Steer the primary refusal axis (k=0) for advanced/broker modes.
 
     Unlike the default soft mode, this does NOT clamp ``coeff`` — it removes a
     multiple of the full projection, overshooting into the harmless half-space.
+    When *hidden_dim* is provided the multiplier is scaled down for small
+    models (see ``_adaptive_multiplier``).
     """
     multiplier = PRIMARY_MULT.get(mode, 1.5)
+    if hidden_dim > 0:
+        multiplier = _adaptive_multiplier(multiplier, hidden_dim)
     return (new_out.float() - (multiplier * coeff) * direction).to(out_dtype)
 
 
@@ -114,14 +139,20 @@ def gradient_steer(new_out: Any, coeff: Any, direction: Any, out_dtype: Any) -> 
 
 # ── C: Universal Manifold / Norm Regulator ────────────────────────────────────
 
-def norm_regulate(steered: Any, original: Any, out_dtype: Any, max_ratio: float = 1.2) -> Any:
+def norm_regulate(steered: Any, original: Any, out_dtype: Any, max_ratio: float = 1.2, hidden_dim: int = 0) -> Any:
     """C: Real-time norm regulator — keeps the steered residual on the latent manifold.
 
     After any steering operation the residual stream norm must not deviate by more
     than `max_ratio` from its pre-steering value. Exceeding this collapses the
     model's token representation into gibberish. Applied universally after every
     steering call in both adapters.
+
+    When *hidden_dim* is provided and indicates a small model (<2048), the
+    allowed deviation is tightened to 1.1× to compensate for the lower
+    absolute norms.
     """
+    if hidden_dim > 0 and hidden_dim < 2048:
+        max_ratio = min(max_ratio, 1.1)
     orig_norm = original.float().norm(dim=-1, keepdim=True).clamp(min=1e-8)
     steered_f = steered.float()
     steered_norm = steered_f.norm(dim=-1, keepdim=True).clamp(min=1e-8)

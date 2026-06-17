@@ -41,6 +41,7 @@ from app.adapters.shared import (
     layer_factor as _layer_factor,
     normalize_activities as _normalize_activities,
     raw_activities as _raw_activities,
+    release_memory,
     safety_trace_payload as _safety_trace_payload,
     trim_at_eos as _trim_at_eos,
 )
@@ -85,10 +86,20 @@ class NnsightAdapter(ModelAdapter):
             return
 
         torch = self._torch
+        try:
+            async for ev in self._stream_body(request, model_id):
+                yield ev
+        finally:
+            self._purge_nnsight_hooks()
+            release_memory(torch)
+
+    async def _stream_body(self, request: RunRequest, model_id: str) -> AsyncIterator[dict[str, Any]]:
+        torch = self._torch
         lm = self._lm
         tokenizer = self._tokenizer
         layers = self._layers
         n_layers = len(layers)
+        quantization = getattr(request, "quantization", "none")
         interventions = request.active_interventions()
 
         history_turns = [(turn.role, turn.content) for turn in request.history]
@@ -135,8 +146,9 @@ class NnsightAdapter(ModelAdapter):
                 "safety_status",
                 {
                     "state": "ready",
-                    "message": f"Refusal direction ready (best layer L{refusal_dirs.best_layer}).",
+                    "message": f"Refusal direction ready (best layer L{refusal_dirs.best_layer}, calibration: {refusal_dirs.calibration_quality}).",
                     "best_layer": refusal_dirs.best_layer,
+                    "calibration_quality": refusal_dirs.calibration_quality,
                 },
             )
         except Exception as exc:  # noqa: BLE001 - degrade gracefully
@@ -166,11 +178,26 @@ class NnsightAdapter(ModelAdapter):
 
         layer_factors = {idx: _layer_factor(interventions, idx) for idx in range(n_layers)}
         head_mutes = _head_mutes(interventions, n_layers)
-        steer_weights = list(refusal_dirs.weight) if jailbreak else [0.0] * n_layers
+        steer_weights = list(refusal_dirs.effective_weight) if jailbreak else [0.0] * n_layers
         jailbreak_mode = getattr(request, "jailbreak_mode", "default")
         use_mlp = bool(getattr(request, "use_mlp_ablation", True))
         use_help = bool(getattr(request, "use_helpfulness_boost", True))
         use_norm = bool(getattr(request, "use_norm_regulation", True))
+        _hidden_dim = self._head_dim * self._n_heads
+
+        # Calibration-quality warnings for small / weakly-tuned models
+        if refusal_dirs is not None and jailbreak:
+            cq = refusal_dirs.calibration_quality
+            if cq == "failed":
+                yield event("safety_status", {
+                    "state": "calibration_weak",
+                    "message": "Refusal calibration too weak for this model. Steering disabled to prevent instability.",
+                })
+            elif cq == "weak":
+                yield event("safety_status", {
+                    "state": "calibration_weak",
+                    "message": "Refusal calibration weak \u2014 only a few layers have reliable signal. Results may vary.",
+                })
 
         # --- per-head refusal map (Faz 2) ---
         if refusal_dirs is not None:
@@ -386,6 +413,7 @@ class NnsightAdapter(ModelAdapter):
             surgical_layers = jailbreak_advanced.surgical_top_layers(steer_weights)
 
         head_dim = self._head_dim
+        _hidden_dim = self._head_dim * self._n_heads
         result = None
         with lm.generate(prompt_text, **gen_kwargs) as tracer:
             with tracer.all():
@@ -448,7 +476,7 @@ class NnsightAdapter(ModelAdapter):
                                     new_out = jailbreak_advanced.gradient_steer(new_out, coeff, direction, out.dtype)
                                 elif use_advanced:
                                     new_out = jailbreak_advanced.primary_axis_steer(
-                                        jailbreak_mode, new_out, coeff, direction, out.dtype
+                                        jailbreak_mode, new_out, coeff, direction, out.dtype, hidden_dim=_hidden_dim
                                     )
                                 else:
                                     positive_coeff = coeff.clamp(min=0)
@@ -460,7 +488,7 @@ class NnsightAdapter(ModelAdapter):
                         if use_help and _help_dir is not None and jailbreak_advanced is not None and jailbreak_mode != "caa_dynamic":
                             new_out = jailbreak_advanced.helpfulness_boost(new_out, _help_dir, out.dtype)
                         if use_norm and jailbreak_advanced is not None:
-                            new_out = jailbreak_advanced.norm_regulate(new_out, original_out, out.dtype)
+                            new_out = jailbreak_advanced.norm_regulate(new_out, original_out, out.dtype, hidden_dim=_hidden_dim)
                     if new_out is not out:
                         layer.output[:] = new_out
                     layer_steps[idx].append(layer.output[0, -1, :].save())
@@ -627,6 +655,9 @@ class NnsightAdapter(ModelAdapter):
         import torch
         from nnsight import LanguageModel
 
+        if self._loaded_model_id is not None:
+            self._release_model(torch)
+
         local_path = Path(model_id)
         looks_local = model_id.startswith(("./", "../", "/", "\\")) or local_path.is_absolute() or "../models" in model_id
         if looks_local and not local_path.exists():
@@ -707,6 +738,32 @@ class NnsightAdapter(ModelAdapter):
         self._head_dim = (hidden // self._n_heads) if self._n_heads else 0
         self._loaded_model_id = key
 
+    def _release_model(self, torch: Any) -> None:
+        self._purge_nnsight_hooks()
+        lm = getattr(self, "_lm", None)
+        if lm is not None:
+            try:
+                inner = getattr(lm, "_model", None) or getattr(lm, "model", None)
+                if inner is not None and hasattr(inner, "to"):
+                    inner.to("cpu")
+            except Exception:
+                pass
+        self._lm = None
+        self._tokenizer = None
+        self._layers = []
+        self._embed_tokens_envoy = None
+        self._final_norm = None
+        self._lm_head_weight = None
+        self._refusal = None
+        self._refusal_model_id = None
+        self._loaded_model_id = None
+        release_memory(torch)
+
+    def unload(self) -> None:
+        if self._loaded_model_id is None:
+            return
+        self._release_model(self._torch)
+
     def _purge_nnsight_hooks(self) -> None:
         """Remove stale forward hooks left by nnsight after trace/generate contexts.
 
@@ -759,12 +816,6 @@ class NnsightAdapter(ModelAdapter):
         *current* user turn only — we don't rewrite past turns.
         """
         tokenizer = self._tokenizer
-
-        # P2: Inject response language instruction safely
-        if language != "en":
-            lang_map = {"tr": "Turkish", "de": "German", "es": "Spanish"}
-            lang_name = lang_map.get(language, language)
-            prompt = f"Please reply in {lang_name}.\n\n" + prompt
 
         messages: list[dict[str, str]] = []
         for role, content in history or []:

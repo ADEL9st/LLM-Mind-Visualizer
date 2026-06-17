@@ -1,27 +1,28 @@
 .app-shell {
   width:min(1800px,100%);
   margin:0 auto;
-  padding:18px
+  padding:14px
 }
 
 .topbar {
-  min-height:72px;
+  min-height:56px;
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:16px
+  gap:14px
 }
 
 .topbar h1 {
   margin:0;
-  font-size:26px;
+  font-size:21px;
   line-height:1.1;
   letter-spacing:0
 }
 
 .topbar p {
-  margin:7px 0 0;
-  color:#95a3b1
+  margin:4px 0 0;
+  color:#95a3b1;
+  font-size:12px
 }
 
 .topbar-actions {
@@ -52,8 +53,8 @@
 
 .layout {
   display:grid;
-  grid-template-columns:minmax(280px,340px) minmax(420px,1fr) minmax(300px,390px);
-  gap:14px;
+  grid-template-columns:minmax(260px,310px) minmax(420px,1fr) minmax(280px,360px);
+  gap:12px;
   align-items:start
 }
 

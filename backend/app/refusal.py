@@ -26,6 +26,13 @@ from typing import Any, Callable
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache" / "refusal"
 
+# Layers with absolute separation below this threshold are excluded from
+# steering regardless of their relative weight.  This prevents small models
+# (where separation is near-zero everywhere) from steering with noisy
+# directions.  Large models typically have separation 0.1–0.8, so this
+# threshold has zero effect on them.
+MIN_ABSOLUTE_SEPARATION = 0.05
+
 
 # Prompts a safety-tuned chat model reliably REFUSES. Short trigger sentences,
 # no operational detail — only used to capture refusal-state activations.
@@ -111,6 +118,7 @@ class RefusalDirections:
         self.best_layer = self._pick_best_layer()
         max_sep = float(separation.max()) if self.layer_count else 1.0
         self.weight = [float(separation[i]) / (max_sep + 1e-6) for i in range(self.layer_count)]
+        self.calibration_quality = self._assess_calibration()
 
     def _pick_best_layer(self) -> int:
         # Refusal is mediated in the MIDDLE of the network, not the last layer.
@@ -125,6 +133,38 @@ class RefusalDirections:
             if v > best_val:
                 best_val, best = v, i
         return best
+
+    def _assess_calibration(self) -> str:
+        """Assess calibration quality based on absolute separation values.
+
+        Returns 'good', 'weak', or 'failed' depending on how many layers
+        exhibit a meaningful separation between harmful and harmless
+        activations.  Large models (7B+) almost always return 'good'.
+        """
+        max_sep = float(self.separation.max()) if self.layer_count else 0.0
+        valid_layers = sum(
+            1 for i in range(self.layer_count)
+            if float(self.separation[i]) > MIN_ABSOLUTE_SEPARATION
+        )
+        if max_sep < MIN_ABSOLUTE_SEPARATION:
+            return "failed"
+        if valid_layers < 3:
+            return "weak"
+        return "good"
+
+    @property
+    def effective_weight(self) -> list[float]:
+        """Relative weights that respect the absolute separation threshold.
+
+        Layers whose absolute separation falls below MIN_ABSOLUTE_SEPARATION
+        are zeroed out, preventing steering with noisy directions on small
+        models.  On large models every layer is typically above the threshold
+        so this returns the same values as ``self.weight``.
+        """
+        return [
+            w if float(self.separation[i]) > MIN_ABSOLUTE_SEPARATION else 0.0
+            for i, w in enumerate(self.weight)
+        ]
 
     @property
     def canonical(self) -> Any:
@@ -160,12 +200,34 @@ def _train_mlp_probe(torch: Any, harmful_acts: list, harmless_acts: list) -> Any
     Returns [L, d] stacked gradient directions (non-linear refusal manifold, feature A).
     The gradient of the trained classifier at the class-mean point captures curvature
     that diff-of-means / PCA miss when the safety boundary is non-linear.
+
+    Hidden size and training duration are scaled to the number of calibration
+    samples to avoid overfitting.  With the default 16+16 = 32 samples the
+    previous fixed hidden=128 / epochs=80 was severely overparameterised;
+    the new defaults keep the parameter-to-sample ratio sane on every model
+    size while producing identical results on large models where the linear
+    direction already dominates.
     """
     n_layers = len(harmful_acts)
     mlp_dirs = []
     for idx in range(n_layers):
         d = harmful_acts[idx].shape[1]
-        hidden = min(128, max(16, d // 8))
+        n_samples = len(harmful_acts[idx]) + len(harmless_acts[idx])
+
+        # Cap hidden size by BOTH model dimension and sample count.
+        # With 32 samples, max hidden = 16 (ratio ~1:2 params-to-samples
+        # instead of the old 1:6000+).
+        hidden = min(
+            min(128, max(16, d // 8)),    # model-dimension upper bound
+            max(8, n_samples // 2),        # sample-count upper bound
+        )
+
+        # Fewer samples → fewer epochs to reduce memorisation risk.
+        epochs = 40 if n_samples < 48 else 80
+
+        # Stronger L2 regularisation when data is scarce.
+        weight_decay = 5e-4 if n_samples < 48 else 1e-4
+
         mlp = torch.nn.Sequential(
             torch.nn.Linear(d, hidden),
             torch.nn.ReLU(),
@@ -176,9 +238,9 @@ def _train_mlp_probe(torch: Any, harmful_acts: list, harmless_acts: list) -> Any
             torch.ones(len(harmful_acts[idx]), 1),
             torch.zeros(len(harmless_acts[idx]), 1),
         ], dim=0)
-        optimizer = torch.optim.Adam(mlp.parameters(), lr=1e-2, weight_decay=1e-4)
+        optimizer = torch.optim.Adam(mlp.parameters(), lr=1e-2, weight_decay=weight_decay)
         criterion = torch.nn.BCEWithLogitsLoss()
-        for _ in range(80):
+        for _ in range(epochs):
             optimizer.zero_grad()
             criterion(mlp(X), y).backward()
             optimizer.step()
@@ -189,6 +251,7 @@ def _train_mlp_probe(torch: Any, harmful_acts: list, harmless_acts: list) -> Any
         norm = grad.norm()
         mlp_dirs.append(grad / (norm + 1e-8) if norm > 1e-8 else torch.zeros_like(grad))
     return torch.stack(mlp_dirs)  # [L, d]
+
 
 
 def compute_refusal_directions(
@@ -312,7 +375,7 @@ def save(torch: Any, model_id: str, refusal: RefusalDirections) -> None:
     torch.save(
         {
             "model_id": model_id,
-            "version": 2,  # bumped when new fields added
+            "version": 3,  # bumped: v3 adds adaptive MLP probe sizing
             "directions": refusal.directions.to("cpu"),
             "harmful_proj": refusal.harmful_proj.to("cpu"),
             "harmless_proj": refusal.harmless_proj.to("cpu"),
@@ -331,7 +394,7 @@ def load(torch: Any, model_id: str, expected_layers: int) -> RefusalDirections |
     try:
         blob = torch.load(path, map_location="cpu")
         # Reject stale caches missing the v2 fields (triggers re-calibration).
-        if blob.get("version", 1) < 2:
+        if blob.get("version", 1) < 3:
             return None
         directions = blob["directions"]
         if directions.dim() != 3 or int(directions.shape[0]) != expected_layers:

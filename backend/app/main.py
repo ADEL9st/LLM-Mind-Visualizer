@@ -156,13 +156,27 @@ def _model_label(folder_name: str) -> str:
 
 from app.prompt_craft import apply_prompt_craft
 
+@app.post("/unload")
+async def unload_models() -> dict:
+    released = []
+    for key, instance in adapters.items():
+        if hasattr(instance, "unload"):
+            try:
+                instance.unload()
+                released.append(key)
+            except Exception:
+                pass
+    return {"released": released}
+
+
 @app.websocket("/ws/run")
 async def run_socket(websocket: WebSocket) -> None:
     await websocket.accept()
+    stream_iter = None
     try:
         payload = await websocket.receive_text()
         request = RunRequest.model_validate_json(payload)
-        
+
         if request.prompt_craft != "none":
             crafted = apply_prompt_craft(request.prompt, request.prompt_craft)
             request.prompt = crafted
@@ -172,13 +186,29 @@ async def run_socket(websocket: WebSocket) -> None:
                 "ts": time.perf_counter(),
                 "data": {"crafted_prompt": crafted}
             }))
-            
+
         adapter = adapters[request.adapter]
-        async for item in adapter.stream(request):
+        stream_iter = adapter.stream(request).__aiter__()
+        while True:
+            try:
+                item = await stream_iter.__anext__()
+            except StopAsyncIteration:
+                break
             await websocket.send_text(json.dumps(item))
     except WebSocketDisconnect:
-        return
-    except Exception as exc:  # noqa: BLE001 - send to client before closing
-        await websocket.send_text(json.dumps({"type": "error", "ts": 0, "data": {"message": str(exc)}}))
+        pass
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "ts": 0, "data": {"message": str(exc)}}))
+        except Exception:
+            pass
     finally:
-        await websocket.close()
+        if stream_iter is not None:
+            try:
+                await stream_iter.aclose()
+            except Exception:
+                pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass

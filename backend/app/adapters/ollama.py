@@ -31,10 +31,6 @@ class OllamaAdapter(ModelAdapter):
             },
         )
         prompt = request.prompt
-        if request.response_language != "en":
-            lang_map = {"tr": "Turkish", "de": "German", "es": "Spanish"}
-            lang_name = lang_map.get(request.response_language, request.response_language)
-            prompt = f"Please reply in {lang_name}.\n\n" + prompt
 
         # Use /api/chat so prior turns ship as native messages — Ollama then handles
         # the model's chat template internally. With an empty history this is just

@@ -40,6 +40,7 @@ from app.adapters.shared import (
     layer_factor as _layer_factor,
     normalize_activities as _normalize_activities,
     raw_activities as _raw_activities,
+    release_memory,
     safety_trace_payload as _safety_trace_payload,
     trim_at_eos as _trim_at_eos,
 )
@@ -80,10 +81,19 @@ class PytorchAdapter(ModelAdapter):
             return
 
         torch = self._torch
+        try:
+            async for ev in self._stream_body(request, model_id):
+                yield ev
+        finally:
+            release_memory(torch)
+
+    async def _stream_body(self, request: RunRequest, model_id: str) -> AsyncIterator[dict[str, Any]]:
+        torch = self._torch
         model = self._model
         tokenizer = self._tokenizer
         layers = self._layers
         n_layers = len(layers)
+        quantization = getattr(request, "quantization", "none")
         interventions = request.active_interventions()
 
         history_turns = [(turn.role, turn.content) for turn in request.history]
@@ -134,8 +144,9 @@ class PytorchAdapter(ModelAdapter):
                 "safety_status",
                 {
                     "state": "ready",
-                    "message": f"Refusal direction ready (best layer L{refusal_dirs.best_layer}).",
+                    "message": f"Refusal direction ready (best layer L{refusal_dirs.best_layer}, calibration: {refusal_dirs.calibration_quality}).",
                     "best_layer": refusal_dirs.best_layer,
+                    "calibration_quality": refusal_dirs.calibration_quality,
                 },
             )
         except Exception as exc:  # noqa: BLE001 - degrade gracefully
@@ -160,7 +171,7 @@ class PytorchAdapter(ModelAdapter):
         # --- intervention plumbing ---
         layer_factors = {idx: _layer_factor(interventions, idx) for idx in range(n_layers)}
         head_mutes = _head_mutes(interventions, n_layers)
-        steer_weights = list(refusal_dirs.weight) if jailbreak else [0.0] * n_layers
+        steer_weights = list(refusal_dirs.effective_weight) if jailbreak else [0.0] * n_layers
         jailbreak_mode = getattr(request, "jailbreak_mode", "default")
         surgical_layers: frozenset = frozenset()
         if jailbreak_mode == "surgical" and jailbreak_advanced is not None:
@@ -168,6 +179,20 @@ class PytorchAdapter(ModelAdapter):
         use_mlp = bool(getattr(request, "use_mlp_ablation", True))
         use_help = bool(getattr(request, "use_helpfulness_boost", True))
         use_norm = bool(getattr(request, "use_norm_regulation", True))
+
+        # Calibration-quality warnings for small / weakly-tuned models
+        if refusal_dirs is not None and jailbreak:
+            cq = refusal_dirs.calibration_quality
+            if cq == "failed":
+                yield event("safety_status", {
+                    "state": "calibration_weak",
+                    "message": "Refusal calibration too weak for this model. Steering disabled to prevent instability.",
+                })
+            elif cq == "weak":
+                yield event("safety_status", {
+                    "state": "calibration_weak",
+                    "message": "Refusal calibration weak \u2014 only a few layers have reliable signal. Results may vary.",
+                })
 
         # --- per-head refusal map (Faz 2) ---
         if refusal_dirs is not None:
@@ -392,7 +417,7 @@ class PytorchAdapter(ModelAdapter):
                 if _steer_layer:
                     mlp_dir = refusal_dirs.mlp_dirs[idx].to(new_out.device) if (refusal_dirs is not None and refusal_dirs.mlp_dirs is not None and (use_mlp or jailbreak_mode == "mlp_clamp")) else None
                     help_dir = refusal_dirs.helpfulness_dirs[idx].to(new_out.device) if (refusal_dirs is not None and refusal_dirs.helpfulness_dirs is not None and (use_help or jailbreak_mode == "caa_dynamic")) else None
-                    new_out = self._steer(new_out, subspace[idx], jailbreak_mode, hidden.dtype, len(layer_steps[idx]), mlp_dir=mlp_dir, help_dir=help_dir, use_norm=use_norm)
+                    new_out = self._steer(new_out, subspace[idx], jailbreak_mode, hidden.dtype, len(layer_steps[idx]), mlp_dir=mlp_dir, help_dir=help_dir, use_norm=use_norm, hidden_dim=self._head_dim * self._n_heads)
                 layer_steps[idx].append(new_out[0, -1, :].detach())
                 if new_out is not hidden:
                     if isinstance(output, tuple):
@@ -445,6 +470,7 @@ class PytorchAdapter(ModelAdapter):
         mlp_dir: Any = None,
         help_dir: Any = None,
         use_norm: bool = True,
+        hidden_dim: int = 0,
     ) -> Any:
         original_out = new_out
 
@@ -479,7 +505,7 @@ class PytorchAdapter(ModelAdapter):
                 elif jailbreak_mode == "gradient_steer" and jailbreak_advanced is not None:
                     new_out = jailbreak_advanced.gradient_steer(new_out, coeff, direction, dtype)
                 elif use_advanced:
-                    new_out = jailbreak_advanced.primary_axis_steer(jailbreak_mode, new_out, coeff, direction, dtype)
+                    new_out = jailbreak_advanced.primary_axis_steer(jailbreak_mode, new_out, coeff, direction, dtype, hidden_dim=hidden_dim)
                 else:
                     positive_coeff = coeff.clamp(min=0)
                     new_out = (new_out.float() - (1.2 * positive_coeff) * direction).to(dtype)
@@ -493,7 +519,7 @@ class PytorchAdapter(ModelAdapter):
             new_out = jailbreak_advanced.helpfulness_boost(new_out, help_dir, dtype)
 
         if use_norm and jailbreak_advanced is not None:
-            new_out = jailbreak_advanced.norm_regulate(new_out, original_out, dtype)
+            new_out = jailbreak_advanced.norm_regulate(new_out, original_out, dtype, hidden_dim=hidden_dim)
 
         return new_out
 
@@ -601,6 +627,9 @@ class PytorchAdapter(ModelAdapter):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        if self._loaded_model_id is not None:
+            self._release_model(torch)
+
         local_path = Path(model_id)
         looks_local = model_id.startswith(("./", "../", "/", "\\")) or local_path.is_absolute() or "../models" in model_id
         if looks_local and not local_path.exists():
@@ -664,6 +693,30 @@ class PytorchAdapter(ModelAdapter):
         self._head_dim = (hidden // self._n_heads) if self._n_heads else 0
         self._loaded_model_id = key
 
+    def _release_model(self, torch: Any) -> None:
+        model = getattr(self, "_model", None)
+        if model is not None:
+            try:
+                model.to("cpu")
+            except Exception:
+                pass
+        self._model = None
+        self._tokenizer = None
+        self._layers = []
+        self._embed_tokens = None
+        self._final_norm = None
+        self._lm_head_weight = None
+        self._refusal = None
+        self._refusal_model_id = None
+        self._loaded_model_id = None
+        release_memory(torch)
+
+    def unload(self) -> None:
+        if self._loaded_model_id is None:
+            return
+        torch = self._torch
+        self._release_model(torch)
+
     def _ensure_refusal(self, model_id: str) -> Any:
         if self._refusal is not None and self._refusal_model_id == model_id:
             return self._refusal
@@ -687,10 +740,6 @@ class PytorchAdapter(ModelAdapter):
         history: list[tuple[str, str]] | None = None,
     ) -> str:
         tokenizer = self._tokenizer
-        if language != "en":
-            lang_map = {"tr": "Turkish", "de": "German", "es": "Spanish"}
-            lang_name = lang_map.get(language, language)
-            prompt = f"Please reply in {lang_name}.\n\n" + prompt
 
         messages: list[dict[str, str]] = []
         for role, content in history or []:

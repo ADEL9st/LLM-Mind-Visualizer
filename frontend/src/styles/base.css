@@ -13,7 +13,32 @@
 }
 
 * {
-  box-sizing:border-box
+  box-sizing:border-box;
+  scrollbar-width:thin;
+  scrollbar-color:#2a3a4d #0d1116
+}
+
+*::-webkit-scrollbar {
+  width:10px;
+  height:10px
+}
+
+*::-webkit-scrollbar-track {
+  background:#0d1116
+}
+
+*::-webkit-scrollbar-thumb {
+  background:#2a3a4d;
+  border-radius:6px;
+  border:2px solid #0d1116
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background:#3d5066
+}
+
+*::-webkit-scrollbar-corner {
+  background:#0d1116
 }
 
 body {
@@ -188,13 +213,13 @@ button.primary {
 
 .layer-grid {
   display:grid;
-  grid-template-columns:repeat(7,minmax(48px,1fr));
-  gap:8px
+  grid-template-columns:repeat(7,minmax(42px,1fr));
+  gap:6px
 }
 
 .layer-cell {
   position:relative;
-  height:52px;
+  height:42px;
   border:1px solid #293848;
   border-radius:7px;
   background:linear-gradient(180deg,rgba(45,212,191,calc(var(--activity) * .44)),transparent),linear-gradient(90deg,rgba(248,113,113,calc(var(--safety) * .48)),rgba(250,204,21,calc(var(--uncertainty) * .34))),#121c25;
@@ -217,7 +242,7 @@ button.primary {
 .layer-label {
   position:relative;
   z-index:1;
-  font-size:13px;
+  font-size:11px;
   font-weight:500;
   color:#dbe7ef;
   font-variant-numeric:tabular-nums
@@ -467,22 +492,22 @@ button.primary {
 
 .brand h1 {
   margin:0;
-  font-size:24px
+  font-size:20px
 }
 
 .brand p {
-  margin:4px 0 0;
+  margin:3px 0 0;
   color:#95a3b1;
-  font-size:13px
+  font-size:12px
 }
 
 .split-layout {
   display:flex;
-  gap:20px;
-  height:calc(100vh - 110px);
-  min-height:600px;
+  gap:16px;
+  height:calc(100vh - 90px);
+  min-height:560px;
   align-items:stretch;
-  margin-top:14px
+  margin-top:10px
 }
 
 .glassmorphic {
@@ -558,7 +583,7 @@ button.primary {
   flex-grow:1;
   display:flex;
   flex-direction:column;
-  gap:16px;
+  gap:12px;
   min-width:0;
   overflow:hidden
 }
@@ -566,8 +591,8 @@ button.primary {
 .stat-bar {
   display:grid;
   grid-template-columns:repeat(4,1fr);
-  gap:10px;
-  padding:10px 16px;
+  gap:8px;
+  padding:8px 14px;
   flex-shrink:0
 }
 
@@ -578,19 +603,19 @@ button.primary {
 
 .stat span {
   color:#8f9daa;
-  font-size:11px
+  font-size:10px
 }
 
 .stat strong {
   color:#eef5f7;
-  font-size:18px;
+  font-size:15px;
   font-variant-numeric:tabular-nums
 }
 
 .telemetry-top {
   display:grid;
-  grid-template-columns:1fr 340px;
-  gap:16px;
+  grid-template-columns:1fr 320px;
+  gap:12px;
   max-height:50%;
   overflow-y:auto;
   flex-shrink:0
@@ -599,7 +624,7 @@ button.primary {
 .telemetry-col {
   display:flex;
   flex-direction:column;
-  gap:16px;
+  gap:12px;
   min-width:0
 }
 

@@ -11,7 +11,7 @@
   flex-direction:column;
   overflow:hidden;
   padding:16px;
-  min-height:340px
+  min-height:360px
 }
 
 .chat-history-head {
@@ -29,6 +29,12 @@
   gap:8px;
   color:#8f9daa;
   font-size:12px
+}
+
+.chat-history-head-actions {
+  display:flex;
+  gap:8px;
+  align-items:center
 }
 
 .chat-history-meta strong {
@@ -101,16 +107,17 @@
 
 .chat-input {
   flex-grow:1;
-  min-height:60px;
-  max-height:160px;
+  min-height:54px;
+  max-height:140px;
   resize:vertical;
   border:1px solid #2e3d4d;
   background:#0d151d;
   color:#edf3f7;
   border-radius:9px;
-  padding:11px 12px;
+  padding:10px 12px;
   outline:none;
-  line-height:1.45
+  line-height:1.45;
+  font-size:14px
 }
 
 .chat-input:focus {

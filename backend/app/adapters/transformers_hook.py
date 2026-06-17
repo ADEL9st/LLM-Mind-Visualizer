@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.base import ModelAdapter, event, hallucination_from_entropy
+from app.adapters.shared import release_memory
 from app.schemas import RunRequest
 
 
@@ -33,6 +34,14 @@ class TransformersHookAdapter(ModelAdapter):
             yield event("error", {"message": f"Failed to load model: {exc}"})
             return
 
+        torch = self._torch
+        try:
+            async for ev in self._stream_body(request, model_id):
+                yield ev
+        finally:
+            release_memory(torch)
+
+    async def _stream_body(self, request: RunRequest, model_id: str) -> AsyncIterator[dict[str, Any]]:
         tokenizer = self._tokenizer
         model = self._model
         torch = self._torch
@@ -200,6 +209,24 @@ class TransformersHookAdapter(ModelAdapter):
             },
         )
 
+    def _release_model(self, torch: Any) -> None:
+        model = getattr(self, "_model", None)
+        if model is not None:
+            try:
+                model.to("cpu")
+            except Exception:
+                pass
+        self._model = None
+        self._tokenizer = None
+        self._layers = []
+        self._loaded_model_id = None
+        release_memory(torch)
+
+    def unload(self) -> None:
+        if self._loaded_model_id is None:
+            return
+        self._release_model(self._torch)
+
     def _ensure_loaded(self, model_id: str) -> None:
         if self._loaded_model_id == model_id:
             return
@@ -207,7 +234,14 @@ class TransformersHookAdapter(ModelAdapter):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        local_files_only = Path(model_id).exists()
+        if self._loaded_model_id is not None:
+            self._release_model(torch)
+
+        local_path = Path(model_id)
+        looks_local = model_id.startswith(("./", "../", "/", "\\")) or local_path.is_absolute() or "../models" in model_id
+        if looks_local and not local_path.exists():
+            raise FileNotFoundError(model_id)
+        local_files_only = local_path.exists()
         tokenizer = AutoTokenizer.from_pretrained(
             model_id,
             trust_remote_code=True,
