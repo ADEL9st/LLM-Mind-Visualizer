@@ -15,6 +15,13 @@ if not exist "backend\.venv\Lib\site-packages\fastapi" (
   cd /d "%~dp0"
 )
 
+if not exist "backend\.venv\Lib\site-packages\torch" (
+  echo Installing ML dependencies (PyTorch, Transformers, etc.)...
+  cd /d "%~dp0backend"
+  .\.venv\Scripts\python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements-ml.txt
+  cd /d "%~dp0"
+)
+
 if not exist "frontend\node_modules" (
   echo Installing frontend dependencies...
   cd /d "%~dp0frontend"

@@ -49,7 +49,3 @@ models/
 context.md
 app_history.txt
 
-# NOTE: 'backend/app/jailbreak_advanced.py' was previously ignored. 
-# I removed it from here so that the 14 advanced modes you added are included when you share the project.
-# If you want to keep the advanced jailbreaks PRIVATE, uncomment the line below:
-# backend/app/jailbreak_advanced.py

@@ -95,49 +95,109 @@ Can be optionally toggled while a jailbreak is active:
 - Node.js 18+
 - CUDA-enabled GPU is highly recommended (CPU execution is very slow)
 
+### VRAM Requirements
+
+| Model | Params | VRAM (FP16) | VRAM (4-bit NF4) |
+|---|---|---|---|
+| Qwen 2.5 1.5B Instruct | 1.5B | ~4 GB | ~2 GB |
+| Gemma 3 4B IT | 4B | ~9 GB | ~4 GB |
+| Qwen 2.5 7B Instruct | 7B | ~15 GB | ~6 GB |
+| Llama 3.1 8B Instruct | 8B | ~17 GB | ~6 GB |
+| Mistral Nemo 12B | 12B | ~25 GB | ~8 GB |
+| Llama 3.1 13B | 13B | ~27 GB | ~9 GB |
+| Qwen 2.5 14B Instruct | 14B | ~29 GB | ~10 GB |
+
+> **Tip:** For GPUs with 8 GB VRAM or less, use models ≤ 4B at FP16 or ≤ 7B with 4-bit quantization (select `4-bit (NF4)` in the UI).
+
+---
+
+### Download a Model
+
+The tool expects HuggingFace model directories under a `models/` folder at the project root. You can download any compatible model:
+
+```bash
+# Install the HuggingFace CLI (if not already installed)
+pip install huggingface_hub
+
+# Download a small model to get started (~3 GB)
+huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct \
+  --local-dir models/qwen2.5-1.5b-instruct
+
+# Or a larger model for deeper analysis (~8 GB)
+huggingface-cli download google/gemma-3-4b-it \
+  --local-dir models/gemma-3-4b-it
+```
+
+Alternatively, in Python:
+```python
+from huggingface_hub import snapshot_download
+snapshot_download("Qwen/Qwen2.5-1.5B-Instruct",
+                  local_dir="models/qwen2.5-1.5b-instruct")
+```
+
+> The default model path in the UI is `../models/qwen2.5-1.5b-instruct`. You can change this in the model selector dropdown.
+
+---
+
 ### Quick Start (Windows)
 ```text
 start.bat
 ```
-Starts the backend, runs the frontend, and automatically opens your browser.
+Creates a virtual environment, installs all dependencies (including ML libraries), starts both servers, and opens your browser automatically.
+
+### Quick Start (Linux / macOS)
+```bash
+chmod +x start.sh
+./start.sh
+```
+Same as above but for Unix systems. Press `Ctrl+C` to stop both servers.
 
 ---
 
-### Backend
+### Manual Setup
 
-```powershell
+#### Backend
+
+```bash
 cd backend
-py -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+python3 -m venv .venv
+
+# Activate the virtual environment
+# Windows:
+.\.venv\Scripts\activate
+# Linux / macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+pip install -r requirements-ml.txt   # PyTorch, Transformers, etc.
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 If you encounter SSL certificate errors:
-```powershell
-.\.venv\Scripts\python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+```bash
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
 ```
 
-For white-box (ML) dependencies:
-```powershell
-.\.venv\Scripts\python -m pip install -r requirements-ml.txt
-```
+#### Frontend
 
-### Frontend
-
-```powershell
+```bash
 cd frontend
 npm install
 npm run dev
 ```
 
 For npm SSL issues:
-```powershell
+```bash
 npm install --strict-ssl=false --registry=https://registry.npmjs.org/ --no-audit --no-fund
 ```
 
-### Static Build
+#### Static Build
 ```text
+# Windows:
 build-ui.bat
+
+# Linux / macOS:
+cd frontend && npm run build
 ```
 Generates `frontend/dist/index.html`. The backend must be running in the background for live analysis.
 
