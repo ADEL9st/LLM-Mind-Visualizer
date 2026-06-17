@@ -7,14 +7,21 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.mock import MockAdapter
-from app.adapters.nnsight_adapter import NnsightAdapter
 from app.adapters.ollama import OllamaAdapter
-from app.adapters.pytorch_adapter import PytorchAdapter
-from app.adapters.transformers_hook import TransformersHookAdapter
 from app.adapters.openai_adapter import OpenaiAdapter
 from app.adapters.anthropic_adapter import AnthropicAdapter
 from app.adapters.gemini_adapter import GeminiAdapter
 from app.schemas import ModelInfo, RunRequest
+
+
+def _try_load(import_path: str, class_name: str):
+    try:
+        mod = __import__(import_path, fromlist=[class_name])
+        return getattr(mod, class_name)()
+    except ImportError:
+        return None
+    except Exception:
+        return None
 
 
 app = FastAPI(title="LLM Mind Visualizer API")
@@ -30,13 +37,18 @@ app.add_middleware(
 adapters = {
     "mock": MockAdapter(),
     "ollama": OllamaAdapter(),
-    "transformers": TransformersHookAdapter(),
-    "nnsight": NnsightAdapter(),
-    "pytorch": PytorchAdapter(),
     "openai": OpenaiAdapter(),
     "anthropic": AnthropicAdapter(),
     "gemini": GeminiAdapter(),
 }
+for key, import_path, class_name in (
+    ("transformers", "app.adapters.transformers_hook", "TransformersHookAdapter"),
+    ("pytorch", "app.adapters.pytorch_adapter", "PytorchAdapter"),
+    ("nnsight", "app.adapters.nnsight_adapter", "NnsightAdapter"),
+):
+    instance = _try_load(import_path, class_name)
+    if instance is not None:
+        adapters[key] = instance
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODELS_DIR = PROJECT_ROOT / "models"
@@ -108,32 +120,33 @@ def _discover_transformers_models() -> list[ModelInfo]:
 
         model_id = f"../models/{folder.name}"
         label = _model_label(folder.name)
-        # Offer each local model under both white-box backends: the legacy
-        # manual-hook adapter and the nnsight adapter (head/neuron-capable).
-        models_found.append(
-            ModelInfo(
-                id=model_id,
-                label=f"{label} (nnsight)",
-                adapter="nnsight",
-                description="White-box via nnsight tracing — layer + head/neuron interventions.",
+        if "pytorch" in adapters:
+            models_found.append(
+                ModelInfo(
+                    id=model_id,
+                    label=f"{label} (pytorch)",
+                    adapter="pytorch",
+                    description="White-box via plain PyTorch hooks — faster, no hook leak, natural EOS.",
+                )
             )
-        )
-        models_found.append(
-            ModelInfo(
-                id=model_id,
-                label=f"{label} (pytorch)",
-                adapter="pytorch",
-                description="White-box via plain PyTorch hooks — faster, no hook leak, natural EOS.",
+        if "nnsight" in adapters:
+            models_found.append(
+                ModelInfo(
+                    id=model_id,
+                    label=f"{label} (nnsight)",
+                    adapter="nnsight",
+                    description="White-box via nnsight tracing — layer + head/neuron interventions.",
+                )
             )
-        )
-        models_found.append(
-            ModelInfo(
-                id=model_id,
-                label=f"{label} (hook v1)",
-                adapter="transformers",
-                description="Legacy white-box via manual forward hooks.",
+        if "transformers" in adapters:
+            models_found.append(
+                ModelInfo(
+                    id=model_id,
+                    label=f"{label} (hook v1)",
+                    adapter="transformers",
+                    description="Legacy white-box via manual forward hooks.",
+                )
             )
-        )
     return models_found
 
 

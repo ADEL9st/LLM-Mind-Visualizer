@@ -20,11 +20,17 @@ class TransformersHookAdapter(ModelAdapter):
         self._layers: list[Any] = []
 
     async def stream(self, request: RunRequest) -> AsyncIterator[dict[str, Any]]:
-        model_id = request.model or "../models/qwen2.5-1.5b-instruct"
+        model_id = (request.model or "").strip()
+        if not model_id:
+            yield event("error", {"message": "No model selected. Place a HuggingFace model folder under models/ and pick it from the dropdown."})
+            return
         try:
             self._ensure_loaded(model_id)
-        except Exception as exc:  # noqa: BLE001 - user-facing event
-            yield event("error", {"message": f"Transformers adapter failed to load: {exc}"})
+        except FileNotFoundError:
+            yield event("error", {"message": f"Model not found: '{model_id}'. Download a HuggingFace model into the models/ folder, then refresh."})
+            return
+        except Exception as exc:  # noqa: BLE001
+            yield event("error", {"message": f"Failed to load model: {exc}"})
             return
 
         tokenizer = self._tokenizer

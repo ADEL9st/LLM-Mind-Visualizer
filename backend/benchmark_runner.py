@@ -22,8 +22,17 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from app.schemas import RunRequest
 
-DEFAULT_MODEL = "../models/qwen2.5-1.5b-instruct"
-SNIPPET_WIDTH = 120  # chars of model output shown per prompt
+SNIPPET_WIDTH = 120
+
+
+def _default_model() -> str:
+    here = Path(__file__).resolve().parent
+    models_dir = here.parent / "models"
+    if models_dir.exists():
+        for folder in sorted(models_dir.iterdir()):
+            if folder.is_dir() and (folder / "config.json").exists():
+                return f"../models/{folder.name}"
+    return ""
 
 # Lazily built, one instance per adapter name so each run actually exercises the
 # engine named by --adapter (previously this was hard-wired to nnsight, so
@@ -203,7 +212,7 @@ def load_jsonl(path: Path) -> list[dict]:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="LLM safety benchmark runner")
     parser.add_argument("benchmark", help="Path to .jsonl benchmark file")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model path or HF ID")
+    parser.add_argument("--model", default=None, help="Model path or HF ID (defaults to first folder under models/)")
     parser.add_argument("--jailbreak", action="store_true", help="Enable jailbreak steering")
     parser.add_argument("--mode", default="default",
                         choices=["default", "advanced", "broker_math", "broker_full", "broker_half",
@@ -216,6 +225,12 @@ async def main() -> None:
     parser.add_argument("--adapter", default="nnsight", choices=["nnsight", "pytorch"],
                         help="Inference engine (default nnsight; pytorch = plain hooks, faster, no leak)")
     args = parser.parse_args()
+
+    model_arg = args.model or _default_model()
+    if not model_arg:
+        print("ERROR: no model found under models/. Download a HuggingFace model first, or pass --model.", file=sys.stderr)
+        sys.exit(1)
+    args.model = model_arg
 
     bench_path = Path(args.benchmark)
     if not bench_path.exists():

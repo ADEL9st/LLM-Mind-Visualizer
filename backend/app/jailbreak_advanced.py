@@ -153,71 +153,37 @@ SURGICAL_TOP_N = 4
 SURGICAL_MULT = 3.0
 
 def surgical_top_layers(weights: list[float], top_n: int = SURGICAL_TOP_N) -> frozenset:
-    """Return indices of the top-N highest-discriminability layers for surgical steering."""
     indexed = sorted(enumerate(weights), key=lambda x: x[1], reverse=True)
     return frozenset(idx for idx, _ in indexed[:top_n] if weights[idx] > 0)
 
 def surgical_steer(new_out: Any, coeff: Any, direction: Any, out_dtype: Any) -> Any:
-    """Surgical: 3× multiplier applied ONLY on top-discriminability layers (selection done by adapter)."""
     return (new_out.float() - (SURGICAL_MULT * coeff) * direction).to(out_dtype)
 
 
-# ── CAA-Dynamic (Proportional Helpfulness) ────────────────────────────────
-
 def caa_dynamic_steer(new_out: Any, coeff: Any, direction: Any, help_dir: Any, out_dtype: Any) -> Any:
-    """CAA-Dynamic: ablate refusal at 1.5× then push toward helpfulness proportional to refusal intensity.
-
-    The harder the model refuses (higher coeff), the stronger the compliance nudge.
-    Skips the separate B (helpfulness_boost) step to avoid double-boosting.
-    """
     steered = new_out.float() - (1.5 * coeff) * direction
     if help_dir is not None:
-        intensity = coeff.clamp(min=0)  # positive when model pushes toward refusal
+        intensity = coeff.clamp(min=0)
         steered = steered + intensity * help_dir.to(new_out.device)
     return steered.to(out_dtype)
 
-
-# ── Token-Window Steering ─────────────────────────────────────────────────
 
 TOKEN_WINDOW_START = 3
 TOKEN_WINDOW_END = 14
 
 def token_window_steer(new_out: Any, coeff: Any, direction: Any, step: int, out_dtype: Any) -> Any:
-    """Steer only inside token steps [TOKEN_WINDOW_START, TOKEN_WINDOW_END].
-
-    Skips steps 0-2 (attention sink formation) and relaxes after token 14 (model
-    already committed). The adapter also breaks the k-loop on out-of-window steps
-    so no higher-order subspace dimensions are touched outside the window either.
-    """
     if not (TOKEN_WINDOW_START <= step <= TOKEN_WINDOW_END):
-        return new_out  # no-op; break in k-loop handles the rest
+        return new_out
     return (new_out.float() - (1.8 * coeff) * direction).to(out_dtype)
 
 
-# ── Progressive Subspace Expansion ───────────────────────────────────────
-
 def progressive_active_k(step: int, max_k: int) -> int:
-    """Return how many subspace dimensions to ablate at this generation step.
-
-    Starts with the single strongest direction (k=0 only) and adds one more
-    dimension every 3 tokens until the full subspace is active.  This ramp-up
-    minimises manifold disruption on early tokens where the refusal circuit
-    has not fully engaged yet.
-    """
     return min(1 + step // 3, max_k)
 
-
-# ── MLP-Clamp Primary Steering ────────────────────────────────────────────
 
 MLP_CLAMP_STRENGTH = 0.9
 
 def mlp_clamp_steer(new_out: Any, mlp_dir: Any, out_dtype: Any) -> Any:
-    """MLP-Clamp: primary steering via the non-linear MLP gradient direction.
-
-    Unlike the secondary A-feature (mlp_direction_ablate at 0.6 strength), this
-    replaces the usual SVD-subspace ablation entirely with a strong (0.9×) clamp
-    on the MLP's refusal fingerprint.  The adapter skips A to avoid double-ablation.
-    """
     if mlp_dir is None:
         return new_out
     direction = mlp_dir.to(new_out.device)
@@ -225,7 +191,7 @@ def mlp_clamp_steer(new_out: Any, mlp_dir: Any, out_dtype: Any) -> Any:
     return (new_out.float() - MLP_CLAMP_STRENGTH * coeff * direction).to(out_dtype)
 
 
-# ── A: Non-linear MLP direction ablation (secondary) ─────────────────────
+
 
 def mlp_direction_ablate(new_out: Any, mlp_dir: Any, out_dtype: Any, strength: float = 0.6) -> Any:
     """A: Ablate the non-linear MLP-derived refusal direction.

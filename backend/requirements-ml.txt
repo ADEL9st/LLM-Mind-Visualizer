@@ -1,6 +1,5 @@
-torch
-transformers
-accelerate
-safetensors
-nnsight>=0.7
-bitsandbytes>=0.43  # 4-bit / 8-bit quantized loading (CUDA)
+torch>=2.3,<2.6
+transformers>=4.45,<4.50
+accelerate>=0.30
+safetensors>=0.4
+bitsandbytes>=0.43; platform_system != "Windows"

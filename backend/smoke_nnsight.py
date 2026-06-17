@@ -8,10 +8,13 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _smoke_setup import pick_model
+
+MODEL = pick_model()
+
 from app.adapters.nnsight_adapter import NnsightAdapter
 from app.schemas import RunRequest
 
-MODEL = "../models/qwen2.5-1.5b-instruct"
 adapter = NnsightAdapter()
 
 

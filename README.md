@@ -113,29 +113,26 @@ Can be optionally toggled while a jailbreak is active:
 
 ### Download a Model
 
-The tool expects HuggingFace model directories under a `models/` folder at the project root. You can download any compatible model:
+The tool expects HuggingFace model directories under a `models/` folder at the project root. Download any compatible causal LM (Qwen, Llama, Gemma, Mistral, DeepSeek, Phi, etc.):
 
 ```bash
-# Install the HuggingFace CLI (if not already installed)
 pip install huggingface_hub
 
-# Download a small model to get started (~3 GB)
-huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct \
-  --local-dir models/qwen2.5-1.5b-instruct
-
-# Or a larger model for deeper analysis (~8 GB)
-huggingface-cli download google/gemma-3-4b-it \
-  --local-dir models/gemma-3-4b-it
+# Pick ANY HuggingFace causal LM. Examples:
+hf download Qwen/Qwen2.5-1.5B-Instruct --local-dir models/qwen2.5-1.5b-instruct
+hf download google/gemma-3-4b-it       --local-dir models/gemma-3-4b-it
+hf download meta-llama/Llama-3.2-3B-Instruct --local-dir models/llama-3.2-3b-instruct
 ```
 
-Alternatively, in Python:
+Or in Python:
 ```python
 from huggingface_hub import snapshot_download
-snapshot_download("Qwen/Qwen2.5-1.5B-Instruct",
-                  local_dir="models/qwen2.5-1.5b-instruct")
+snapshot_download("<repo-id>", local_dir="models/<folder-name>")
 ```
 
-> The default model path in the UI is `../models/qwen2.5-1.5b-instruct`. You can change this in the model selector dropdown.
+> **Windows tip:** if downloads silently fail, append `--local-dir-use-symlinks False` to the `hf` command (Windows blocks symlinks without Developer Mode).
+
+Once a model folder appears under `models/`, refresh the app — the dropdown auto-discovers all valid model folders.
 
 ---
 

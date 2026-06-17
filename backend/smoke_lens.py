@@ -5,10 +5,13 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from _smoke_setup import pick_model
+
+MODEL = pick_model()
+
 from app.adapters.nnsight_adapter import NnsightAdapter
 from app.schemas import RunRequest
 
-MODEL = "../models/qwen2.5-1.5b-instruct"
 adapter = NnsightAdapter()
 
 

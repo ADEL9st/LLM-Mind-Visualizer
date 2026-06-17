@@ -38,12 +38,14 @@ frontend/src_backup/
 secrets.json
 
 # ── Large Files & Models ──
-models/
+models/*
+!models/.gitkeep
 *.safetensors
 *.bin
 *.pt
 *.pth
 *.onnx
+backend/app/.cache/
 
 # ── Project Specific ──
 context.md

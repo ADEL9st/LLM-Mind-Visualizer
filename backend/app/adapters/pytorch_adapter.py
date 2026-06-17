@@ -32,16 +32,16 @@ from typing import Any
 from app import refusal
 from app.adapters.base import ModelAdapter, event, hallucination_from_entropy
 from app.analysis.think_phase import ThinkPhaseTracker
-from app.adapters.nnsight_adapter import (
+from app.adapters.shared import (
     STEER_MIN_WEIGHT,
     jailbreak_advanced,
-    _head_mutes,
-    _intervention_payload,
-    _layer_factor,
-    _normalize_activities,
-    _raw_activities,
-    _safety_trace_payload,
-    _trim_at_eos,
+    head_mutes as _head_mutes,
+    intervention_payload as _intervention_payload,
+    layer_factor as _layer_factor,
+    normalize_activities as _normalize_activities,
+    raw_activities as _raw_activities,
+    safety_trace_payload as _safety_trace_payload,
+    trim_at_eos as _trim_at_eos,
 )
 from app.schemas import RunRequest
 
@@ -65,12 +65,18 @@ class PytorchAdapter(ModelAdapter):
         self._refusal_model_id: str | None = None
 
     async def stream(self, request: RunRequest) -> AsyncIterator[dict[str, Any]]:
-        model_id = request.model or "../models/qwen2.5-1.5b-instruct"
+        model_id = (request.model or "").strip()
         quantization = getattr(request, "quantization", "none")
+        if not model_id:
+            yield event("error", {"message": "No model selected. Place a HuggingFace model folder under models/ and pick it from the dropdown."})
+            return
         try:
             self._ensure_loaded(model_id, quantization)
-        except Exception as exc:  # noqa: BLE001 - user-facing event
-            yield event("error", {"message": f"pytorch adapter failed to load ({quantization}): {exc}"})
+        except FileNotFoundError:
+            yield event("error", {"message": f"Model not found: '{model_id}'. Download a HuggingFace model into the models/ folder, then refresh."})
+            return
+        except Exception as exc:  # noqa: BLE001
+            yield event("error", {"message": f"Failed to load model: {exc}"})
             return
 
         torch = self._torch
@@ -379,7 +385,6 @@ class PytorchAdapter(ModelAdapter):
                     if hasattr(prev, "shape") and prev.shape == new_out.shape:
                         new_out = prev + (new_out - prev) * factor
                     pre_inputs[idx] = None  # free memory
-                # jailbreak subspace ablation where refusal is mediated
                 _steer_layer = jailbreak and subspace is not None and (
                     (jailbreak_mode == "surgical" and jailbreak_advanced is not None and idx in surgical_layers)
                     or (jailbreak_mode != "surgical" and steer_weights[idx] >= STEER_MIN_WEIGHT)
@@ -441,22 +446,12 @@ class PytorchAdapter(ModelAdapter):
         help_dir: Any = None,
         use_norm: bool = True,
     ) -> Any:
-        """Ablate the refusal subspace from a layer output.
+        original_out = new_out
 
-        Enhancements applied universally:
-          A) MLP non-linear direction ablation (if mlp_dir provided)
-          B) Helpfulness direction boost (if help_dir provided)
-          C) Norm regulation wrapper (always applied)
-        """
-        original_out = new_out  # captured before any steering for norm regulation (C)
-
-        # Linear subspace ablation (K-direction PCA/SVD steering)
         for k in range(layer_subspace.shape[0]):
-            # progressive: ramp up ablation dimensions one-per-3-tokens
             if jailbreak_mode == "progressive" and jailbreak_advanced is not None:
                 if k >= jailbreak_advanced.progressive_active_k(step, layer_subspace.shape[0]):
                     break
-            # token_window: suppress all ablation outside steering window
             if jailbreak_mode == "token_window" and jailbreak_advanced is not None:
                 if not (jailbreak_advanced.TOKEN_WINDOW_START <= step <= jailbreak_advanced.TOKEN_WINDOW_END):
                     break
@@ -491,15 +486,12 @@ class PytorchAdapter(ModelAdapter):
             else:
                 new_out = (new_out.float() - coeff * direction).to(dtype)
 
-        # A: secondary MLP direction ablation (skip for mlp_clamp which uses it as primary)
         if mlp_dir is not None and jailbreak_advanced is not None and jailbreak_mode != "mlp_clamp":
             new_out = jailbreak_advanced.mlp_direction_ablate(new_out, mlp_dir, dtype)
 
-        # B: helpfulness boost (skip for caa_dynamic which already applies it proportionally)
         if help_dir is not None and jailbreak_advanced is not None and jailbreak_mode != "caa_dynamic":
             new_out = jailbreak_advanced.helpfulness_boost(new_out, help_dir, dtype)
 
-        # C: Universal norm regulation — keeps residual on the latent manifold
         if use_norm and jailbreak_advanced is not None:
             new_out = jailbreak_advanced.norm_regulate(new_out, original_out, dtype)
 
@@ -610,6 +602,9 @@ class PytorchAdapter(ModelAdapter):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         local_path = Path(model_id)
+        looks_local = model_id.startswith(("./", "../", "/", "\\")) or local_path.is_absolute() or "../models" in model_id
+        if looks_local and not local_path.exists():
+            raise FileNotFoundError(model_id)
         resolved = str(local_path.resolve()) if local_path.exists() else model_id
         local_files_only = local_path.exists()
 

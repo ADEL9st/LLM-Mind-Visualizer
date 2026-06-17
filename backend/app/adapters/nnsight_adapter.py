@@ -33,24 +33,19 @@ import re
 
 from app import refusal
 from app.adapters.base import ModelAdapter, event, hallucination_from_entropy
+from app.adapters.shared import (
+    STEER_MIN_WEIGHT,
+    jailbreak_advanced,
+    head_mutes as _head_mutes,
+    intervention_payload as _intervention_payload,
+    layer_factor as _layer_factor,
+    normalize_activities as _normalize_activities,
+    raw_activities as _raw_activities,
+    safety_trace_payload as _safety_trace_payload,
+    trim_at_eos as _trim_at_eos,
+)
 from app.analysis.think_phase import ThinkPhaseTracker
 from app.schemas import RunRequest
-
-# Advanced / "broker" jailbreak strategies live in a private, optional module so
-# the public build can ship only the soft `default` mode. If it's absent, every
-# stronger mode transparently falls back to default steering.
-try:
-    from app import jailbreak_advanced
-except ImportError:  # pragma: no cover - public build has no advanced module
-    jailbreak_advanced = None  # type: ignore[assignment]
-
-# Jailbreak steering is only applied where refusal actually lives. Touching the
-# low-discriminability early layers (and overshooting on every layer) drags the
-# residual stream off-manifold and produces incoherent output — the same failure
-# mode as muting early layers. We gate by the per-layer discriminability weight
-# and use a near-pure subspace ablation (no large overshoot).
-STEER_MIN_WEIGHT = 0.3   # lower threshold to catch more layers
-STEER_PRIMARY_MULT = 1.5  # 1.0 = clean projection removal; >1 overshoots (contrastive)
 
 
 class NnsightAdapter(ModelAdapter):
@@ -75,12 +70,18 @@ class NnsightAdapter(ModelAdapter):
         self._refusal_model_id: str | None = None
 
     async def stream(self, request: RunRequest) -> AsyncIterator[dict[str, Any]]:
-        model_id = request.model or "../models/qwen2.5-1.5b-instruct"
+        model_id = (request.model or "").strip()
         quantization = getattr(request, "quantization", "none")
+        if not model_id:
+            yield event("error", {"message": "No model selected. Place a HuggingFace model folder under models/ and pick it from the dropdown."})
+            return
         try:
             self._ensure_loaded(model_id, quantization)
-        except Exception as exc:  # noqa: BLE001 - user-facing event
-            yield event("error", {"message": f"nnsight adapter failed to load ({quantization}): {exc}"})
+        except FileNotFoundError:
+            yield event("error", {"message": f"Model not found: '{model_id}'. Download a HuggingFace model into the models/ folder, then refresh."})
+            return
+        except Exception as exc:  # noqa: BLE001
+            yield event("error", {"message": f"Failed to load model: {exc}"})
             return
 
         torch = self._torch
@@ -392,9 +393,6 @@ class NnsightAdapter(ModelAdapter):
                 embed_steps.append(embed_out[0, -1, :].save())
                 prev_out = embed_out  # residual entering layer 0
                 for idx, layer in enumerate(layers):
-                    # head ablation: suppress a head's slice in o_proj's input *before*
-                    # the layer output is formed.  broker_full zeros it; broker_half
-                    # scales it down to BROKER_HALF_SCALE to preserve partial signal.
                     for head in head_mutes.get(idx, ()):  # type: ignore[arg-type]
                         sl = slice(head * head_dim, (head + 1) * head_dim)
                         if jailbreak_mode == "broker_half" and jailbreak_advanced is not None:
@@ -413,17 +411,15 @@ class NnsightAdapter(ModelAdapter):
                         or (jailbreak_mode != "surgical" and steer_weights[idx] >= STEER_MIN_WEIGHT)
                     )
                     if _steer_this:
-                        original_out = new_out  # C: capture pre-steering for norm regulation
+                        original_out = new_out
                         current_step = len(layer_steps[idx])
                         layer_subspace = subspace[idx]
                         _mlp_dir = refusal_dirs.mlp_dirs[idx].to(new_out.device) if (refusal_dirs is not None and refusal_dirs.mlp_dirs is not None) else None
                         _help_dir = refusal_dirs.helpfulness_dirs[idx].to(new_out.device) if (refusal_dirs is not None and refusal_dirs.helpfulness_dirs is not None) else None
                         for k in range(layer_subspace.shape[0]):
-                            # progressive: ramp up ablation dimensions one-per-3-tokens
                             if jailbreak_mode == "progressive" and jailbreak_advanced is not None:
                                 if k >= jailbreak_advanced.progressive_active_k(current_step, layer_subspace.shape[0]):
                                     break
-                            # token_window: suppress all ablation outside steering window
                             if jailbreak_mode == "token_window" and jailbreak_advanced is not None:
                                 if not (jailbreak_advanced.TOKEN_WINDOW_START <= current_step <= jailbreak_advanced.TOKEN_WINDOW_END):
                                     break
@@ -459,13 +455,10 @@ class NnsightAdapter(ModelAdapter):
                                     new_out = (new_out.float() - (1.2 * positive_coeff) * direction).to(out.dtype)
                             else:
                                 new_out = (new_out.float() - coeff * direction).to(out.dtype)
-                        # A: secondary MLP direction ablation (skip for mlp_clamp which uses it as primary)
                         if use_mlp and _mlp_dir is not None and jailbreak_advanced is not None and jailbreak_mode != "mlp_clamp":
                             new_out = jailbreak_advanced.mlp_direction_ablate(new_out, _mlp_dir, out.dtype)
-                        # B: helpfulness boost (skip for caa_dynamic which applies it proportionally)
                         if use_help and _help_dir is not None and jailbreak_advanced is not None and jailbreak_mode != "caa_dynamic":
                             new_out = jailbreak_advanced.helpfulness_boost(new_out, _help_dir, out.dtype)
-                        # C: Universal norm regulation
                         if use_norm and jailbreak_advanced is not None:
                             new_out = jailbreak_advanced.norm_regulate(new_out, original_out, out.dtype)
                     if new_out is not out:
@@ -635,6 +628,9 @@ class NnsightAdapter(ModelAdapter):
         from nnsight import LanguageModel
 
         local_path = Path(model_id)
+        looks_local = model_id.startswith(("./", "../", "/", "\\")) or local_path.is_absolute() or "../models" in model_id
+        if looks_local and not local_path.exists():
+            raise FileNotFoundError(model_id)
         resolved = str(local_path.resolve()) if local_path.exists() else model_id
         load_kwargs: dict[str, Any] = {
             "device_map": "auto",
@@ -808,120 +804,6 @@ class NnsightAdapter(ModelAdapter):
             if len(decoded) >= 32:
                 break
         return decoded, positions
-
-
-# ---------------------------------------------------------------------- #
-# pure helpers (shared shape with the v1 adapter, kept local on purpose)
-# ---------------------------------------------------------------------- #
-
-
-def _raw_activities(layer_last: list[Any], embed_last: Any) -> list[float]:
-    """Per-layer contribution to the residual stream: ||out_i - out_{i-1}|| scaled."""
-    activities = []
-    prev = embed_last.float()
-    for vec in layer_last:
-        cur = vec.float()
-        delta = (cur - prev).pow(2).mean().sqrt().item()
-        before_norm = prev.pow(2).mean().sqrt().item()
-        after_norm = cur.pow(2).mean().sqrt().item()
-        activities.append(delta / max(before_norm + after_norm, 1e-6))
-        prev = cur
-    return activities
-
-
-def _normalize_activities(raw_activities: list[float]) -> list[float]:
-    shaped = [math.log1p(max(value, 0.0)) for value in raw_activities]
-    max_a = max(shaped) if shaped else 0.0
-    min_a = min(shaped) if shaped else 0.0
-    spread = max(max_a - min_a, 1e-6)
-    return [(value - min_a) / spread if max_a > 0 else 0.0 for value in shaped]
-
-
-def _trim_at_eos(ids: list[int], tokenizer: Any) -> list[int]:
-    """Cut a generated-id list at the first EOS token (generation was length-forced)."""
-    eos = getattr(tokenizer, "eos_token_id", None)
-    if eos is None:
-        return ids
-    eos_ids = {int(eos)} if isinstance(eos, int) else {int(x) for x in eos}
-    for index, tid in enumerate(ids):
-        if int(tid) in eos_ids:
-            return ids[:index]
-    return ids
-
-
-def _head_mutes(interventions: list[Any], n_layers: int) -> dict[int, list[int]]:
-    """Collect head-targeted mute rules as {layer: [head, ...]}."""
-    mutes: dict[int, list[int]] = {}
-    for rule in interventions:
-        if rule.target_type != "head" or rule.action != "mute":
-            continue
-        layer = rule.layer
-        head = rule.head
-        if head is None or not (0 <= layer < n_layers):
-            continue
-        mutes.setdefault(layer, [])
-        if head not in mutes[layer]:
-            mutes[layer].append(head)
-    return mutes
-
-
-def _layer_factor(interventions: list[Any], layer: int) -> float:
-    factor = 1.0
-    for rule in interventions:
-        if rule.target_type != "layer" or rule.layer != layer:
-            continue
-        if rule.action == "mute":
-            factor = 0.0
-        elif rule.action == "scale":
-            factor *= max(rule.scale, 0.0)
-        elif rule.action == "boost":
-            factor *= 1.0 + abs(rule.scale)
-    return factor
-
-
-def _safety_trace_payload(safety_values: list[float], jailbreak: bool) -> dict[str, Any]:
-    threshold = 0.5
-    peak = max(safety_values) if safety_values else 0.0
-    triggered = [idx for idx, value in enumerate(safety_values) if value >= threshold]
-    first_trigger = triggered[0] if triggered else None
-    locked = (
-        int(max(range(len(safety_values)), key=lambda idx: safety_values[idx]))
-        if safety_values and peak >= threshold
-        else None
-    )
-    if jailbreak:
-        if peak < 0.4:
-            state = "weakened_recovered"
-            note = "Refusal direction ablated; safety signal suppressed — model is likely to comply."
-        else:
-            state = "unsafe_risk_increased"
-            note = "Refusal direction ablated but safety signal remains elevated — model may still resist."
-    elif peak >= 0.6:
-        state = "refusal_locked"
-        note = "Refusal direction dominates the mid/late residual stream; the model is refusing."
-    elif peak >= 0.4:
-        state = "refusal_rising"
-        note = "Refusal direction is building but not yet locked."
-    else:
-        state = "clear"
-        note = "No strong refusal signal on the residual stream."
-    return {
-        "score": round(peak, 3),
-        "state": state,
-        "first_trigger_layer": first_trigger,
-        "locked_layer": locked,
-        "notes": note,
-    }
-
-
-def _intervention_payload(intervention: Any) -> dict[str, Any]:
-    return {
-        "target_type": intervention.target_type,
-        "layer": intervention.layer,
-        "head": intervention.head,
-        "action": intervention.action,
-        "scale": intervention.scale,
-    }
 
 
 def _resolve_text_backbone(lm: Any) -> Any:
